@@ -8,7 +8,7 @@ Notes on the Embedded Code in this Repo
 ---------------------------------------
 * I have already taken care of cross-compiling ZBar for the beaglebone platform.  It is in the zbar directory and should be ready to run when put on your beaglebone.  Learn more about zbar here: http://zbar.sourceforge.net.  I'm using it to decode the QR Codes.
 * To run this, make sure python is installed, and execute "python entry.py"
-* You will need to edit entry.py to look for the valid.txt file on your own webserver
+* You will need to edit config.py to look for the valid.txt file on your own webserver
 
 How it Works (Demo)
 -------------------
