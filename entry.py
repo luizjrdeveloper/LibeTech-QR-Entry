@@ -3,65 +3,75 @@ import sys
 import os
 import hashlib
 import time
+import config
+import RPi.GPIO as GPIO
 
-os.system('rm -f tmp.txt')
+# Configuring BCM, GPIO Numbering
+GPIO.setmode(GPIO.BCM)
+GPIO.setwarnings(False)
+# Configurando pino como out(Pino de Saída)
+GPIO.setup(config.door_lock, GPIO.OUT)
+GPIO.setup(config.status, GPIO.OUT)
+GPIO.setup(config.green, GPIO.OUT)
+GPIO.setup(config.red, GPIO.OUT)
+# Configuring the Pin Direction
+GPIO.output(config.door_lock, GPIO.LOW)
+GPIO.output(config.status, GPIO.HIGH)
+GPIO.output(config.green, GPIO.LOW)
+GPIO.output(config.red, GPIO.LOW)
 
-#Setup I/O (Green = 45, Red = 60)
-#Door = 44
+# Clearing Existing Files
+with open('tmp.txt', 'w'): pass
 
-os.system('echo 44 > /sys/class/gpio/export')
-os.system('echo out > /sys/class/gpio/gpio44/direction')
-os.system('echo 0 > /sys/class/gpio/gpio44/value')
-
-os.system('echo 45 > /sys/class/gpio/export')
-os.system('echo out > /sys/class/gpio/gpio45/direction')
-os.system('echo 0 > /sys/class/gpio/gpio45/value')
-
-os.system('echo 60 > /sys/class/gpio/export')
-os.system('echo out > /sys/class/gpio/gpio60/direction')
-os.system('echo 1 > /sys/class/gpio/gpio60/value')
-
-#Start ZBar Process Externally; It will send most recent reading into tmp.txt
+# Starting ZBar in a Subprocess;
+# The Objective and save the extract of the last QR read in the file tmp.txt
+# Need change /dev/video0 for your camera device
 print "Starting ZBar"
-os.system('./exec_zbar.sh &')
-print "ZBar is Running"
+zbarcam = subprocess.Popen("./zbar/bin/zbarcam --raw --nodisplay --prescale=300x300 /dev/video0 >> tmp.txt", shell=True)
+print "ZBar is running."
+time.sleep(0.4)
+print "Waiting for a new validation..."
 
-#if there's a valid file here, delete it
-os.system('rm -f valid.txt')
-#in a while loop, compare current tmp.txt QR hash with the approved hash from the web
+try:
+	while (1):
+		if os.path.isfile("tmp.txt") and os.path.getsize("tmp.txt")>0:
+			os.system('wget --quiet http://www.libetech.com/valid.txt')
+			val = subprocess.check_output(["tail", "-n", "1", "tmp.txt"]).strip()
+			try:
+				val_hash = hashlib.md5(val).hexdigest()
+				#print "Hashed Key from ZBAR QR Reading: %s" % val_hash
+				approved = subprocess.check_output(["tail", "-n", "1", "valid.txt"])
+				#print "Approved Hash from Web: %s" % approved
+				os.system('rm valid.txt')
+				if approved in val_hash:
+					print "Valid QR Code Key"
+					GPIO.output(config.door_lock, GPIO.HIGH)
+					GPIO.output(config.green, GPIO.HIGH)
+					time.sleep(2)
+					GPIO.output(config.door_lock, GPIO.LOW)
+					GPIO.output(config.green, GPIO.LOW)
+					time.sleep(0.4)
+					print "Waiting for a new validation..."
+				else:
+					print "Invalid QR Code"
+					while flashes < 3:
+						GPIO.output(config.red, GPIO.HIGH)
+						time.sleep(0.2)
+						GPIO.output(config.red, GPIO.LOW)
+						time.sleep(0.2)
+						flashes = flashes + 1
+					flashes = 0
+					time.sleep(0.4)
+					print "Waiting for a new validation..."
+			with open('tmp.txt', 'w'): pass
 
-curr_size = 0
-old_size = 0
-mode = -1 #notes the state of the last trial
-while (1):
-	os.system('wget --quiet http://www.libetech.com/valid.txt')
-	val = subprocess.check_output(["tail", "-n", "1", "tmp.txt"]).strip()
-	curr_size = os.path.getsize('tmp.txt')
-	if curr_size != old_size:
-		mode = -1
-	#print curr_size, old_size
-	#print "Key from ZBAR QR Reading: %s" % val
-	val_hash = hashlib.md5(val).hexdigest()
-	#print "Hashed Key from ZBAR QR Reading: %s" % val_hash
-	approved = subprocess.check_output(["tail", "-n", "1", "valid.txt"])
-	#print "Approved Hash from Web: %s" % approved
-	os.system('rm valid.txt')
-	if approved in val_hash:
-		if mode != 1:
-			print "QR Code Accepted"
-			mode=1
-			os.system('echo 1 > /sys/class/gpio/gpio45/value')
-			os.system('echo 1 > /sys/class/gpio/gpio44/value')
-			os.system('echo 0 > /sys/class/gpio/gpio60/value')
-			time.sleep(10)
-			os.system('echo 0 > /sys/class/gpio/gpio45/value')
-			os.system('echo 0 > /sys/class/gpio/gpio44/value')
-			os.system('echo 1 > /sys/class/gpio/gpio60/value')
-	else:
-		if mode != 0:
-			print "No Valid Code Presented"
-			mode=0
-			os.system('echo 1 > /sys/class/gpio/gpio60/value')
-			os.system('echo 0 > /sys/class/gpio/gpio44/value')
-			os.system('echo 0 > /sys/class/gpio/gpio45/value')
-	old_size = curr_size
+# Undoing the GPIO modifications and Closing the zbar subprocesses
+except (KeyboardInterrupt, SystemExit):
+	print "\nClearing Pin States (GPIO)"
+	GPIO.cleanup()
+	print "Clearing temporary files"
+	os.system('sudo rm -f tmp.txt')
+	print "Closing ZBar"
+	zbarcam.terminate()
+	print "Closing Aplication"
+	time.sleep(0.1)
